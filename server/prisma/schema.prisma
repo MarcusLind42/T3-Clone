@@ -1,18 +1,112 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
+// 1. Define the generator for Prisma Client
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
 }
 
+// 2. Define the datasource for your database
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL") // e.g., "file:./dev.db"
 }
 
+// --------------------------------------------------
+// ENUMS - For type safety and consistency
+// --------------------------------------------------
+
+enum Provider {
+  OpenAI
+  Anthropic
+  Google
+  Ollama // For local models
+}
+
+enum Role {
+  user
+  assistant
+}
+
+// --------------------------------------------------
+// MODELS - Your database tables
+// --------------------------------------------------
+
+// Stores user account information for authentication
 model User {
-  id    Int    @id @default(autoincrement())
-  email String @unique
-  name  String
+  id            String       @id @default(uuid())
+  email         String       @unique
+  passwordHash  String
+  name          String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  apiKeys       UserApiKey[]
+  chats         Chat[]
+}
+
+// Stores user-provided API keys, encrypted at rest
+model UserApiKey {
+  id                String   @id @default(uuid())
+  userId            String
+  provider          Provider
+  apiKeyEncrypted   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Constraints
+  @@unique([userId, provider], name: "user_provider_unique")
+}
+
+// Global configuration for supported LLM models
+model Model {
+  id            String    @id @default(uuid())
+  provider      Provider
+  name          String // e.g., "GPT-4o"
+  apiIdentifier String    @unique // e.g., "gpt-4o"
+  contextWindow Int
+  isActive      Boolean   @default(true)
+
+  // Relations
+  chats         Chat[]
+  messages      Message[]
+}
+
+// Represents a single conversation thread, owned by a user
+model Chat {
+  id        String    @id @default(uuid())
+  userId    String
+  title     String
+  modelId   String // The default model for this chat
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  model     Model     @relation(fields: [modelId], references: [id])
+  messages  Message[]
+}
+
+// Represents a single message within a chat
+model Message {
+  id              String    @id @default(uuid())
+  chatId          String
+  role            Role
+  content         String
+  modelId         String? // Model that generated this message (null for user role)
+  createdAt       DateTime  @default(now())
+  metadata        Json? // For token counts, latency, etc.
+
+  // For conversation branching (tree structure)
+  parentMessageId String?
+  parentMessage   Message?  @relation("MessageBranch", fields: [parentMessageId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replies         Message[] @relation("MessageBranch")
+
+  // Relations
+  chat            Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  model           Model?    @relation(fields: [modelId], references: [id])
 }
